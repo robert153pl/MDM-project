@@ -1,0 +1,203 @@
+library(tidyverse)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(sf) # dla mapy
+
+
+# Tym razem polaczymy sie z baza danych, zeby wydobyc dane o wypozyczeniach
+# rowerow. Utworzymy grafy skierowane. A na koniec dolozymy wizualizacje
+# na prostej mapie.
+
+
+# wydobycie danych z bazy ####
+
+# obiekt polaczenia
+library(odbc)
+con <- dbConnect(odbc(), 
+                 driver = "ODBC Driver 17 for SQL Server", 
+                 server = "157.158.145.202", 
+                 database = "BostonBikes",
+                 uid = "student_AB2", # user
+                 pwd = "student_AB2", # password
+                 port = 1433)
+
+# zapytanie - trasy
+qry1 <- 'SELECT s1.Name AS [from], 
+    		s2.Name AS [to],
+    		COUNT(*) AS [weight],
+    		AVG(TripDuration) AS [avg]
+    	FROM Trips t JOIN Stations s1
+    		ON t.StartStationId = s1.StationId
+    		JOIN Stations s2
+    		ON t.EndStationId = s2.StationId
+    	WHERE Year = 2021
+    	GROUP BY s1.Name, s2.Name
+    	ORDER BY COUNT(*) DESC'
+trasy <- dbGetQuery(con, qry1)
+
+# stacje
+qry2 <- 'SELECT Name AS [id],
+              Latitude,
+              Longitude,
+              District,
+              TotalDocks
+          FROM Stations'
+stacje <- dbGetQuery(con, qry2)
+
+# # wczytanie danych z pliku (dla osob bez dostepu do VPN)
+# trasy <- read.csv2('./data/boston_bikes_trasy.csv')
+# stacje <- read.csv2('./data/boston_bikes_stacje.csv')
+
+# trasy zawieraja informacje o wypozyczeniach miedzy stacjami
+# reprezentuja krawedzie grafu
+# kolumna weight reprezentuje liczbe wypozyczen na danej trasie,
+# a avg to sredni czas przejazdu danej trasy
+trasy %>% as_tibble()
+
+# stacje zawieraja najwazniejsze informacje o stacjach, w tym ich wspolrzedne
+# reprezentuja wierzcholki grafu
+# kolumna id jest jednoczesnie identyfikatorem i nazwa stacji
+stacje %>% as_tibble()
+# poprawa typow danych (potrzebne, jesli skorzystano z bazy danych)
+stacje <- stacje %>% 
+    mutate(Latitude = as.numeric(Latitude),
+           Longitude = as.numeric(Longitude))
+stacje %>% as_tibble() # ok
+
+
+
+
+# tworzenie wykresu ####
+tg_boston <- tbl_graph(nodes = stacje, edges = trasy, directed = TRUE)
+tg_boston
+
+
+### rysunek - wszystko ####
+tg_boston %>%
+    ggraph(layout = 'stress') +
+    geom_edge_fan(alpha = 0.05, type = 'closed',
+                  arrow = arrow(length = unit(1, 'mm'), type = 'closed'), 
+                  end_cap = circle(1, 'mm')) +
+    geom_node_point(fill = 'grey', size = 1, shape = 21) +
+    theme_graph()
+# nieczytelne
+
+
+### rysunek - tylko trasy z okreslona liczba wypozyczen ####
+sum(trasy$weight > 100) # 6905
+sum(trasy$weight > 700) # 143
+
+tg_boston %>%
+    activate(edges) %>% 
+    filter(weight > 100) %>% 
+    ggraph(layout = 'stress') +
+    geom_edge_fan(alpha = 0.05, 
+                  arrow = arrow(length = unit(1, 'mm'), type = 'closed'), 
+                  end_cap = circle(1, 'mm')) +
+    geom_node_point(fill = 'grey', size = 1, shape = 21) +
+    theme_graph()
+
+
+# wezmy tylko dwie najwieksze skladowe
+tg_boston %>%
+    activate(edges) %>% 
+    filter(weight > 100) %>% 
+    activate(nodes) %>% 
+    
+    mutate(c = components(.)$membership) %>%   # sprawdzam czlonkostwo 
+    group_by(c) %>%                            # grupuje po c
+    mutate(n = n()) %>%                        # zliczam liczebnosc skladowych
+    filter(n > 10) %>%                         # filtruje tylko wieksze niz 10
+    ungroup %>%                                # <- na wszelki wypadek
+
+    ggraph(layout = 'stress') +
+    geom_edge_fan(alpha = 0.05, 
+                  arrow = arrow(length = unit(1, 'mm'), type = 'closed'), 
+                  end_cap = circle(1, 'mm')) +
+    geom_node_point(aes(fill = District), size = 1.5, shape = 21) +
+    theme_graph()
+
+
+# skorzystajmy ze wspolrzednych punktow (Longitutde i Latitude)
+tg_boston %>%
+    activate(edges) %>% 
+    filter(weight > 100) %>% 
+    activate(nodes) %>% 
+    mutate(c = components(.)$membership) %>%   
+    group_by(c) %>%      
+    mutate(n = n()) %>%             
+    filter(n > 10) %>% 
+    ungroup() %>% 
+    ggraph(x = Longitude, y = Latitude) +  # layout wg wspolrzednych geograf.
+    geom_edge_fan(alpha = 0.05, 
+                  arrow = arrow(length = unit(1, 'mm'), type = 'closed'), 
+                  end_cap = circle(1, 'mm')) +
+    geom_node_point(aes(fill = District), size = 1.5, shape = 21) +
+    theme_graph()
+
+
+
+
+# wykres z prosta mapa ####
+
+# pobranie mapy bostonu
+boston_sf <- st_read('https://raw.githubusercontent.com/codeforgermany/click_that_hood/refs/heads/main/public/data/boston.geojson')
+
+# wykres
+tg_boston %>%
+    activate(edges) %>%
+    filter(weight > 100) %>%
+    activate(nodes) %>%
+    mutate(c = components(.)$membership) %>%
+    group_by(c) %>%
+    mutate(n = n()) %>%
+    filter(n > 10) %>%
+    ungroup() %>% 
+    ggraph(x = Longitude, y = Latitude) +  
+    geom_sf(data = boston_sf) +            # tutaj warstwa z mapa
+    geom_edge_fan(alpha = 0.05, 
+                  arrow = arrow(length = unit(1, 'mm'), type = 'closed'), 
+                  end_cap = circle(1, 'mm')) +
+    geom_node_point(aes(fill = District), size = 1.5, shape = 21) +
+    theme_graph()
+
+
+# wykres wszystkiego (jeśli wyjdzie)
+tg_boston %>%
+    ggraph(x = Longitude, y = Latitude) +  
+    geom_sf(data = boston_sf) +
+    geom_edge_fan(alpha = 0.02, 
+                  arrow = arrow(length = unit(1, 'mm'), type = 'closed'), 
+                  end_cap = circle(1, 'mm')) +
+    geom_node_point(aes(fill = District), size = 1.5, shape = 21) +
+    theme_graph()
+
+
+# wezmy tylko kilka polnocnych okregow
+bos <- boston_sf %>% 
+    filter(name %in% c('Allston', 'West End', 'Beacon Hill', 'Fenway', 
+                       'Back Bay', 'Longwood Medical Area', 'Mission Hill'))
+# i wykres z najwazniejszymi trasami
+# przezroczystosc krawedzi zalezna od weight,
+# wielkosc punktow uzalezniona od stopni (uwzgledniajac wagi),
+# etykiety najpopularniejszych stacji
+tg_boston %>%
+    mutate(degree = centrality_degree(mode = 'all', weights = weight)) %>% 
+    activate(edges) %>%
+    filter(weight > 700) %>%
+    activate(nodes) %>%
+    mutate(c = components(.)$membership) %>%
+    group_by(c) %>%
+    mutate(n = n()) %>%
+    filter(n > 10) %>%
+    ungroup() %>% 
+    ggraph(x = Longitude, y = Latitude) +  
+    geom_sf(data = bos) +
+    geom_node_point(aes(fill = District, size = degree), shape = 21) +
+    geom_edge_fan(aes(alpha = weight), 
+                  arrow = arrow(length = unit(1, 'mm'), type = 'closed'), 
+                  end_cap = circle(2, 'mm'), start_cap = circle(2, 'mm')) +
+    geom_node_text(aes(label = ifelse(degree >= 60000, id, NA), color = District),
+                    size = 3, repel = TRUE) +
+    theme_graph()
