@@ -3,7 +3,7 @@ library(readxl)
 Drukarki <- read_excel("Dane/Drukarki.xlsx")
 View(Drukarki)
 
-
+library(MCDA)
 #Cleaning dataset, load libraries essential to preparing data for analysis 
 
 library(dplyr)

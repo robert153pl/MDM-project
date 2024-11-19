@@ -1,0 +1,53 @@
+### ELECTRE
+library(MCDA)
+
+input <- "D C1 C2 C3 C4
+a1	21	250	1	0
+a2 22	150	0	1
+a3 18	150	1	0
+a4 15	250	1	1
+a5 18	100	1	1
+a6 13	100	1	1
+a7 21	250	1	1
+a8 7	250	0	1
+a9 20	250	0	0
+a10 20	150	0	0
+a11 12	150	1	1
+a12 32	150	0	0
+a13 20 	225	1	1
+a14 28	150	1	1
+a15 20	150	0	0
+a16 20	150	0	0
+a17 7	100	1	1
+a18 8	60	1	1
+a19 13	100	1	1
+a20 33	250	1	0
+a21 8	60	1	1
+a22 10 100	1	1"
+
+dd <- read.table(textConnection(input), header = TRUE, na.strings = NA)
+
+performanceTable <- as.matrix(dd[ ,2:5])
+rownames(performanceTable) <- dd[ ,1]
+colnames(performanceTable) <- c("C1", "C2", "C3", "C4")
+performanceTable$C3<-as.logical(performanceTable$C3)
+performanceTable$C4<-as.logical(performanceTable$C4)
+scores <-performanceTable
+scores
+
+q <- c( .1, .1, .1, .1)
+p <- c(1, 1, 1, 1)
+v <- c(max(scores[,1]) - min(scores[,1]),
+       max(scores[,2]) - min(scores[,2]),
+       max(scores[,3]) - min(scores[,3]),
+       max(scores[,4]) - min(scores[,4]))
+
+w <- c(0.25, 0.25, 0.25, 0.25)
+
+res <- ELECTRE3(scores, q, p, v, w = w / sum(w))
+res
+
+names(res$scoring) <- rownames(scores)
+sort(res$scoring, decreasing = TRUE)
+
+barplot(res$scoring)
